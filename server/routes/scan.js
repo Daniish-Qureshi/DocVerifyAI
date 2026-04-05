@@ -35,6 +35,13 @@ router.post("/analyze", auth, upload.single("file"), async (req, res) => {
       contentType: req.file.mimetype,
     });
 
+    // Check if ML service URL is configured
+    if (!process.env.ML_SERVICE_URL) {
+      return res.status(500).json({ 
+        message: "ML service not configured. Please set ML_SERVICE_URL environment variable." 
+      });
+    }
+
     const mlResponse = await axios.post(
       `${process.env.ML_SERVICE_URL}/analyze`,
       formData,

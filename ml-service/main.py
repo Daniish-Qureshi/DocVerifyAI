@@ -29,7 +29,7 @@ app.add_middleware(
 # Gemini Setup
 # ─────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
 # ═══════════════════════════════════════════════════════
@@ -269,12 +269,28 @@ def noise_analysis(image: Image.Image) -> dict:
 
     except Exception as e:
         return {"noise_consistent": True, "suspicious": False, "noise_variation": 0, "details": str(e)}
-
-
-# ═══════════════════════════════════════════════════════
 # 5. GEMINI VISION ANALYSIS
 # ═══════════════════════════════════════════════════════
 def gemini_analysis(image: Image.Image) -> dict:
+    # Check if Gemini API key is available
+    if not client:
+        return {
+            "document_type": "Unknown Document",
+            "verdict": "SUSPICIOUS",
+            "overall_suspicion_score": 60,
+            "reasoning": "AI analysis unavailable - API key not configured",
+            "font_consistent": True,
+            "logo_intact": True,
+            "layout_consistent": True,
+            "color_normal": True,
+            "text_quality_ok": True,
+            "font_issues": None,
+            "logo_issues": None,
+            "layout_issues": None,
+            "color_issues": None,
+            "text_issues": None
+        }
+    
     try:
         prompt = """
         You are a forensic document analyst. Analyze this document image carefully.
