@@ -3,15 +3,13 @@ const router = express.Router();
 const multer = require("multer");
 const axios = require("axios");
 const FormData = require("form-data");
-const Scan = require("../models/Scan");
-const User = require("../models/User");
+const { pool } = require("../config/db");
 const auth = require("../middleware/auth");
 
-// Multer setup - memory storage
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true);
@@ -28,17 +26,15 @@ router.post("/analyze", auth, upload.single("file"), async (req, res) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    // Send image to Python ML Service
     const formData = new FormData();
     formData.append("file", req.file.buffer, {
       filename: req.file.originalname,
       contentType: req.file.mimetype,
     });
 
-    // Check if ML service URL is configured
     if (!process.env.ML_SERVICE_URL) {
-      return res.status(500).json({ 
-        message: "ML service not configured. Please set ML_SERVICE_URL environment variable." 
+      return res.status(500).json({
+        message: "ML service not configured. Please set ML_SERVICE_URL environment variable."
       });
     }
 
@@ -50,23 +46,28 @@ router.post("/analyze", auth, upload.single("file"), async (req, res) => {
 
     const result = mlResponse.data;
 
-    // Save to MongoDB
-    const scan = await Scan.create({
-      user: req.user.id,
-      filename: req.file.originalname,
-      verdict: result.verdict,
-      confidence: result.confidence,
-      fraudScore: result.fraud_score,
-      documentType: result.document_type,
-      summary: result.summary,
-      flags: result.flags,
-      analyses: result.analyses,
-    });
+    const scanResult = await pool.query(
+      `INSERT INTO scans (user_id, filename, verdict, confidence, fraud_score, document_type, summary, flags, analyses)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [
+        req.user.id,
+        req.file.originalname,
+        result.verdict,
+        result.confidence,
+        result.fraud_score,
+        result.document_type,
+        result.summary,
+        JSON.stringify(result.flags || []),
+        JSON.stringify(result.analyses || {})
+      ]
+    );
 
-    // Update user scan count
-    await User.findByIdAndUpdate(req.user.id, { $inc: { totalScans: 1 } });
+    await pool.query(
+      "UPDATE users SET total_scans = total_scans + 1, updated_at = NOW() WHERE id = $1",
+      [req.user.id]
+    );
 
-    res.json({ success: true, scan, result });
+    res.json({ success: true, scan: scanResult.rows[0], result });
 
   } catch (error) {
     console.error("Scan error:", error.message);
@@ -77,10 +78,11 @@ router.post("/analyze", auth, upload.single("file"), async (req, res) => {
 // GET Scan History
 router.get("/history", auth, async (req, res) => {
   try {
-    const scans = await Scan.find({ user: req.user.id })
-      .sort({ createdAt: -1 })
-      .limit(20);
-    res.json({ success: true, scans });
+    const result = await pool.query(
+      "SELECT * FROM scans WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20",
+      [req.user.id]
+    );
+    res.json({ success: true, scans: result.rows });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -89,11 +91,11 @@ router.get("/history", auth, async (req, res) => {
 // GET Single Scan
 router.get("/:id", auth, async (req, res) => {
   try {
-    const scan = await Scan.findById(req.params.id);
-    if (!scan) {
+    const result = await pool.query("SELECT * FROM scans WHERE id = $1", [req.params.id]);
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: "Scan not found" });
     }
-    res.json({ success: true, scan });
+    res.json({ success: true, scan: result.rows[0] });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
